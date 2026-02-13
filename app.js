@@ -40,6 +40,7 @@ const el = {
 };
 
 const ORDER_COST = { move: 1, attack: 2, defend: 1, recon: 1 };
+const unitNodes = new Map();
 
 function init() {
   const grid = document.createElement('div');
@@ -95,24 +96,39 @@ function wireEvents() {
 }
 
 function renderUnits() {
-  [...el.map.querySelectorAll('.unit,.order-arrow,.explosion,.capture-wave')].forEach(n => n.remove());
+  const visibleIds = new Set();
 
   for (const unit of state.units) {
     if (unit.side === 'enemy' && !unit.spotted && state.turn > 1) continue;
-    const node = document.createElement('div');
+    visibleIds.add(unit.id);
+
+    let node = unitNodes.get(unit.id);
+    if (!node) {
+      node = document.createElement('div');
+      node.dataset.id = unit.id;
+      el.map.appendChild(node);
+      unitNodes.set(unit.id, node);
+    }
+
     node.className = `unit ${unit.side}`;
     if (unit.id === state.selectedUnitId) node.classList.add('selected');
     if (unit.supply !== 'Well-supplied') node.classList.add('low-supply');
-    node.dataset.id = unit.id;
     node.style.transform = `translate(${unit.x}px, ${unit.y}px)`;
     node.innerHTML = `<span>${unit.id}</span><span class="health"><i style="width:${unit.hp}%"></i></span>`;
-    el.map.appendChild(node);
+  }
+
+  for (const [id, node] of unitNodes.entries()) {
+    if (!visibleIds.has(id)) {
+      node.remove();
+      unitNodes.delete(id);
+    }
   }
 
   drawOrderArrows();
 }
 
 function drawOrderArrows() {
+  [...el.map.querySelectorAll('.order-arrow')].forEach(n => n.remove());
   for (const order of state.orders) {
     if (!order.target) continue;
     const unit = state.units.find(u => u.id === order.unitId);
@@ -258,7 +274,7 @@ function nextTurn() {
 }
 
 function smoothMoveUnit(unit, x, y) {
-  const node = [...el.map.querySelectorAll('.unit')].find(n => n.dataset.id === unit.id);
+  const node = unitNodes.get(unit.id);
   if (!node) {
     unit.x = x;
     unit.y = y;
