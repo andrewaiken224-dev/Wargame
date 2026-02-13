@@ -1,3 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wargame Turn Planner</title>
+  <style>
+:root {
+  --bg: #10151d;
+  --panel: #1b2430;
+  --text: #dce7f7;
+  --accent: #4db8ff;
+  --enemy: #ff6b6b;
+  --ally: #7dffa1;
+  --warn: #ffcf58;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Inter, Arial, sans-serif; background: var(--bg); color: var(--text); }
+.topbar { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#0d1219; border-bottom:1px solid #2f3f55; }
+.phase-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+button { cursor:pointer; background:#253347; color:var(--text); border:1px solid #405673; border-radius:6px; padding:6px 10px; }
+button:hover { background:#324762; }
+.badge { padding:4px 8px; border-radius:999px; font-size:12px; }
+.badge.planning { background:#1f5d8c; }
+.badge.resolution { background:#7a3a2e; }
+.layout { display:grid; grid-template-columns: 300px 1fr 320px; gap:10px; padding:10px; height: calc(100vh - 62px); }
+.panel { background:var(--panel); border:1px solid #32455f; border-radius:8px; padding:10px; overflow:auto; }
+.map-wrap { display:flex; flex-direction:column; }
+.map {
+  position: relative;
+  min-height: 560px;
+  background: linear-gradient(120deg, #31443d, #485f52);
+  border:1px solid #6d8678;
+  border-radius:8px;
+  overflow:hidden;
+}
+.grid {
+  position:absolute; inset:0;
+  background-size: 60px 60px;
+  background-image: linear-gradient(to right, rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,.08) 1px, transparent 1px);
+}
+.unit {
+  position:absolute;
+  width:28px; height:28px;
+  border:2px solid #09101a;
+  border-radius:6px;
+  display:grid; place-items:center;
+  font-size:10px;
+  color:#081014;
+  transition: transform 220ms linear, box-shadow 160ms ease;
+  will-change: transform;
+}
+.unit.ally { background: var(--ally); }
+.unit.enemy { background: var(--enemy); }
+.unit.selected { box-shadow: 0 0 0 3px var(--accent); animation: pulse 1.1s infinite; }
+.unit.low-supply::after { content:"!"; position:absolute; top:-8px; right:-8px; background:var(--warn); color:#111; width:14px; height:14px; border-radius:50%; font-weight:bold; font-size:10px; display:grid; place-items:center; }
+.health {
+  position:absolute; bottom:-6px; left:0; right:0; height:4px; background:#111;
+}
+.health>i { display:block; height:100%; background:#7dffa1; }
+.order-arrow {
+  position:absolute; height:2px; transform-origin: left center;
+  background: #fff;
+  opacity: .8;
+}
+.order-arrow.attack { background: #ff8f8f; }
+.order-arrow.defend { background: #8dd9ff; }
+.order-arrow.recon { background: #ffe18d; }
+.explosion {
+  position:absolute; width:12px; height:12px; border-radius:50%;
+  background: radial-gradient(circle, #ffd166 0, #f94144 70%);
+  animation: boom .4s ease-out forwards;
+  pointer-events:none;
+}
+.capture-wave {
+  position:absolute; border-radius:50%; border:2px solid #9ce5ff;
+  animation: wave .7s ease-out forwards;
+}
+.selection { margin-top:8px; font-size:13px; }
+.summary, .history { font-size:13px; }
+.history li { margin-bottom:6px; cursor:pointer; }
+.context-menu { position:fixed; background:#1d2a38; border:1px solid #45607b; border-radius:6px; z-index:20; min-width:130px; }
+.context-menu button { display:block; width:100%; text-align:left; border:none; border-bottom:1px solid #344b62; border-radius:0; background:transparent; }
+.hidden { display:none; }
+.designer label { display:block; font-size:12px; margin-bottom:6px; }
+.designer input { width:100%; margin-top:2px; }
+.orbat, #intelPanel, #analytics { font-size:12px; line-height:1.4; background:#122030; border-radius:6px; padding:8px; border:1px solid #263f57; }
+.turn-fade { animation: turnFade .55s ease; }
+@keyframes pulse { 0%{ transform: scale(1);} 50%{ transform: scale(1.04);} 100%{ transform: scale(1);} }
+@keyframes boom { from { transform:scale(1); opacity:1;} to { transform:scale(7); opacity:0;} }
+@keyframes wave { from { width:10px; height:10px; opacity:.9; } to { width:180px; height:180px; opacity:0;} }
+@keyframes turnFade { from { opacity:.4; } to { opacity:1; } }
+@media (max-width: 1200px){ .layout{ grid-template-columns:1fr; height:auto;} .map{min-height:420px;} }
+
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Wargame Turn-Based Planner</h1>
+    <div class="phase-controls">
+      <span id="phaseBadge" class="badge planning">Planning Phase</span>
+      <button id="togglePhaseBtn">Start Resolution</button>
+      <button id="resolveBtn">Resolve Turn</button>
+      <button id="nextTurnBtn">Next Turn</button>
+      <span id="turnCounter">Turn 1</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="left-panel panel">
+      <h2>Orders</h2>
+      <div id="actionPointsWrap">Action Points: <strong id="actionPoints">0</strong></div>
+      <div class="controls-grid">
+        <button data-order="move">Move (M)</button>
+        <button data-order="attack">Attack (A)</button>
+        <button data-order="defend">Defend (D)</button>
+        <button data-order="recon">Recon (R)</button>
+      </div>
+      <h3>Order Queue</h3>
+      <ul id="orderQueue"></ul>
+
+      <h2>Turn Summary</h2>
+      <div id="summaryBox" class="summary"></div>
+
+      <h2>History Timeline</h2>
+      <ul id="historyList" class="history"></ul>
+    </aside>
+
+    <section class="map-wrap panel">
+      <div id="map" class="map"></div>
+      <div id="selectionInfo" class="selection">No unit selected</div>
+      <div id="quickActions" class="context-menu hidden"></div>
+    </section>
+
+    <aside class="right-panel panel">
+      <h2>NATO Catalog</h2>
+      <details open>
+        <summary>Echelons</summary>
+        <p>Squad, Section, Platoon, Company, Battalion, Regiment, Brigade, Division, Corps, Army, Army Group</p>
+      </details>
+      <details>
+        <summary>Types</summary>
+        <p>Infantry, Armor, Artillery, Air Defense, Engineers, Logistics, HQ, Aviation, Naval</p>
+      </details>
+      <details>
+        <summary>Modifiers</summary>
+        <p>Mechanized, Motorized, Armored, Airborne, Marine, Mountain, Combined Arms</p>
+      </details>
+
+      <h2>Division Designer</h2>
+      <form id="designerForm" class="designer">
+        <label>Base Type <input name="baseType" value="Infantry" /></label>
+        <label>Echelon <input name="echelon" value="Battalion" /></label>
+        <label>Specialization <input name="special" value="Mechanized" /></label>
+        <label>Combat Power <input type="number" name="power" value="6" min="1" max="20" /></label>
+        <label>Mobility <input type="number" name="mobility" value="5" min="1" max="10" /></label>
+        <label>Supply Need <input type="number" name="supplyNeed" value="3" min="1" max="10" /></label>
+        <button type="submit">Save Template</button>
+      </form>
+      <ul id="templateList"></ul>
+
+      <h2>ORBAT Editor</h2>
+      <div id="orbatTree" class="orbat"></div>
+
+      <h2>Intel / Fog of War</h2>
+      <div id="intelPanel"></div>
+
+      <h2>Analytics</h2>
+      <div id="analytics"></div>
+    </aside>
+  </main>
+
+  <dialog id="turnDialog">
+    <h3>Turn Results</h3>
+    <div id="dialogContent"></div>
+    <button id="closeDialogBtn">Close</button>
+  </dialog>
+
+  <script>
 const state = {
   turn: 1,
   phase: 'planning',
@@ -429,3 +608,7 @@ function refreshUI() {
 }
 
 init();
+
+</script>
+</body>
+</html>
