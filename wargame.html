@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wargame Turn Planner</title>
+  <style>
+:root {
+  --bg: #10151d;
+  --panel: #1b2430;
+  --text: #dce7f7;
+  --accent: #4db8ff;
+  --enemy: #ff6b6b;
+  --ally: #7dffa1;
+  --warn: #ffcf58;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Inter, Arial, sans-serif; background: var(--bg); color: var(--text); }
+.topbar { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#0d1219; border-bottom:1px solid #2f3f55; }
+.phase-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+button { cursor:pointer; background:#253347; color:var(--text); border:1px solid #405673; border-radius:6px; padding:6px 10px; }
+button:hover { background:#324762; }
+.badge { padding:4px 8px; border-radius:999px; font-size:12px; }
+.badge.planning { background:#1f5d8c; }
+.badge.resolution { background:#7a3a2e; }
+.layout { display:grid; grid-template-columns: 300px 1fr 320px; gap:10px; padding:10px; height: calc(100vh - 62px); }
+.panel { background:var(--panel); border:1px solid #32455f; border-radius:8px; padding:10px; overflow:auto; }
+.map-wrap { display:flex; flex-direction:column; }
+.map {
+  position: relative;
+  min-height: 560px;
+  background: linear-gradient(120deg, #31443d, #485f52);
+  border:1px solid #6d8678;
+  border-radius:8px;
+  overflow:hidden;
+}
+.grid {
+  position:absolute; inset:0;
+  background-size: 60px 60px;
+  background-image: linear-gradient(to right, rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,.08) 1px, transparent 1px);
+}
+.unit {
+  position:absolute;
+  width:28px; height:28px;
+  border:2px solid #09101a;
+  border-radius:6px;
+  display:grid; place-items:center;
+  font-size:10px;
+  color:#081014;
+  transition: transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 160ms ease;
+  will-change: transform;
+}
+.unit.ally { background: var(--ally); }
+.unit.enemy { background: var(--enemy); }
+.unit.selected { box-shadow: 0 0 0 3px var(--accent); animation: pulse 1.1s infinite; }
+.unit.low-supply::after { content:"!"; position:absolute; top:-8px; right:-8px; background:var(--warn); color:#111; width:14px; height:14px; border-radius:50%; font-weight:bold; font-size:10px; display:grid; place-items:center; }
+.health {
+  position:absolute; bottom:-6px; left:0; right:0; height:4px; background:#111;
+}
+.health>i { display:block; height:100%; background:#7dffa1; }
+.order-arrow {
+  position:absolute; height:2px; transform-origin: left center;
+  background: #fff;
+  opacity: .8;
+}
+.order-arrow.attack { background: #ff8f8f; }
+.order-arrow.defend { background: #8dd9ff; }
+.order-arrow.recon { background: #ffe18d; }
+.explosion {
+  position:absolute; width:12px; height:12px; border-radius:50%;
+  background: radial-gradient(circle, #ffd166 0, #f94144 70%);
+  animation: boom .4s ease-out forwards;
+  pointer-events:none;
+}
+.capture-wave {
+  position:absolute; border-radius:50%; border:2px solid #9ce5ff;
+  animation: wave .7s ease-out forwards;
+}
+.selection { margin-top:8px; font-size:13px; }
+.summary, .history { font-size:13px; }
+.history li { margin-bottom:6px; cursor:pointer; }
+.context-menu { position:fixed; background:#1d2a38; border:1px solid #45607b; border-radius:6px; z-index:20; min-width:130px; }
+.selection-box { position:absolute; border:1px dashed #9ce5ff; background: rgba(120,200,255,.15); pointer-events:none; }
+.depot { position:absolute; width:14px; height:14px; border-radius:50%; border:2px solid #000; background:#fff; }
+.depot.ally{ background:#7dffa1; }
+.depot.enemy{ background:#ff6b6b; }
+.supply-line { position:absolute; height:1px; background:#9ce5ff; opacity:.5; transform-origin:left center; }
+.controls-grid, .tool-row { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:6px; }
+.context-menu button { display:block; width:100%; text-align:left; border:none; border-bottom:1px solid #344b62; border-radius:0; background:transparent; }
+.hidden { display:none; }
+.designer label { display:block; font-size:12px; margin-bottom:6px; }
+.designer input { width:100%; margin-top:2px; }
+.orbat, #intelPanel, #analytics { font-size:12px; line-height:1.4; background:#122030; border-radius:6px; padding:8px; border:1px solid #263f57; }
+.turn-fade { animation: turnFade .55s ease; }
+@keyframes pulse { 0%{ transform: scale(1);} 50%{ transform: scale(1.04);} 100%{ transform: scale(1);} }
+@keyframes boom { from { transform:scale(1); opacity:1;} to { transform:scale(7); opacity:0;} }
+@keyframes wave { from { width:10px; height:10px; opacity:.9; } to { width:180px; height:180px; opacity:0;} }
+@keyframes turnFade { from { opacity:.4; } to { opacity:1; } }
+@media (max-width: 1200px){ .layout{ grid-template-columns:1fr; height:auto;} .map{min-height:420px;} }
+
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Wargame Turn-Based Planner</h1>
+    <div class="phase-controls">
+      <span id="phaseBadge" class="badge planning">Planning Phase</span>
+      <button id="togglePhaseBtn">Start Resolution</button>
+      <button id="resolveBtn">Resolve Turn</button>
+      <button id="nextTurnBtn">Next Turn</button>
+      <span id="turnCounter">Turn 1</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="left-panel panel">
+      <h2>Orders</h2>
+      <div id="actionPointsWrap">Action Points: <strong id="actionPoints">0</strong></div>
+      <div class="controls-grid">
+        <button data-order="move">Move (M)</button>
+        <button data-order="attack">Attack (A)</button>
+        <button data-order="defend">Defend (D)</button>
+        <button data-order="recon">Recon (R)</button>
+      </div>
+      <h3>Order Queue</h3>
+      <ul id="orderQueue"></ul>
+      <div class="tool-row">
+        <button id="lineFormationBtn">Line Formation</button>
+        <button id="echelonFormationBtn">Echelon Formation</button>
+        <button id="defArcFormationBtn">Def Arc</button>
+        <button id="clearOrdersBtn">Clear Orders</button>
+      </div>
+
+      <h2>Turn Summary</h2>
+      <div id="summaryBox" class="summary"></div>
+
+      <h2>History Timeline</h2>
+      <ul id="historyList" class="history"></ul>
+    </aside>
+
+    <section class="map-wrap panel">
+      <div id="map" class="map"></div>
+      <div id="selectionInfo" class="selection">No unit selected</div>
+      <div class="selection">Shift+Drag = batch select</div>
+      <div id="quickActions" class="context-menu hidden"></div>
+    </section>
+
+    <aside class="right-panel panel">
+      <h2>NATO Catalog</h2>
+      <details open>
+        <summary>Echelons</summary>
+        <p>Squad, Section, Platoon, Company, Battalion, Regiment, Brigade, Division, Corps, Army, Army Group</p>
+      </details>
+      <details>
+        <summary>Types</summary>
+        <p>Infantry, Armor, Artillery, Air Defense, Engineers, Logistics, HQ, Aviation, Naval</p>
+      </details>
+      <details>
+        <summary>Modifiers</summary>
+        <p>Mechanized, Motorized, Armored, Airborne, Marine, Mountain, Combined Arms</p>
+      </details>
+
+      <h2>Division Designer</h2>
+      <form id="designerForm" class="designer">
+        <label>Base Type <input name="baseType" value="Infantry" /></label>
+        <label>Echelon <input name="echelon" value="Battalion" /></label>
+        <label>Specialization <input name="special" value="Mechanized" /></label>
+        <label>Combat Power <input type="number" name="power" value="6" min="1" max="20" /></label>
+        <label>Mobility <input type="number" name="mobility" value="5" min="1" max="10" /></label>
+        <label>Supply Need <input type="number" name="supplyNeed" value="3" min="1" max="10" /></label>
+        <button type="submit">Save Template</button>
+      </form>
+      <ul id="templateList"></ul>
+
+      <h2>ORBAT Editor</h2>
+      <div id="orbatTree" class="orbat"></div>
+
+      <h2>Intel / Fog of War</h2>
+      <div id="intelPanel"></div>
+
+      <h2>Analytics</h2>
+      <div id="analytics"></div>
+
+      <h2>AI / Multiplayer / Scenarios</h2>
+      <label>AI Difficulty
+        <select id="aiDifficulty">
+          <option value="easy">Easy</option>
+          <option value="normal" selected>Normal</option>
+          <option value="hard">Hard</option>
+        </select>
+      </label>
+      <div class="tool-row">
+        <button id="hotseatBtn">Hotseat: Allies</button>
+        <button id="runAiBtn">Run AI</button>
+        <button id="exportOrdersBtn">Export Orders</button>
+        <button id="importOrdersBtn">Import Orders</button>
+      </div>
+      <label>Scenario
+        <select id="scenarioSelect">
+          <option value="default">Default</option>
+          <option value="kursk">Battle of Kursk (sample)</option>
+          <option value="normandy">Normandy (sample)</option>
+        </select>
+      </label>
+      <button id="loadScenarioBtn">Load Scenario</button>
+    </aside>
+  </main>
+
+  <dialog id="turnDialog">
+    <h3>Turn Results</h3>
+    <div id="dialogContent"></div>
+    <button id="closeDialogBtn">Close</button>
+  </dialog>
+
+  <script>
+
+const state = {
+  turn: 1,
+  phase: 'planning',
+  selectedUnitId: null,
+  selectedUnitIds: [],
+  currentOrderType: 'move',
+  templates: [],
+  history: [],
+  timelineSnapshots: [],
+  currentSide: 'ally',
+  aiDifficulty: 'normal',
+  units: [
+    { id: 'A1', side: 'ally', x: 80, y: 90, readiness: 'Full', supply: 'Well-supplied', morale: 'Veteran', hp: 100, ap: 3, power: 7, mobility: 6, type: 'Infantry Btn' },
+    { id: 'A2', side: 'ally', x: 120, y: 220, readiness: 'Reduced', supply: 'Low', morale: 'Regular', hp: 75, ap: 3, power: 6, mobility: 5, type: 'Armor Coy' },
+    { id: 'E1', side: 'enemy', x: 530, y: 160, readiness: 'Full', supply: 'Well-supplied', morale: 'Regular', hp: 100, ap: 3, power: 7, mobility: 5, type: 'Motorized Btn', spotted: false },
+    { id: 'E2', side: 'enemy', x: 620, y: 300, readiness: 'Minimal', supply: 'Out', morale: 'Shaken', hp: 50, ap: 3, power: 4, mobility: 4, type: 'Artillery Bty', spotted: false },
+  ],
+  orders: [],
+  supplyDepots: [{ x: 50, y: 50, side: 'ally' }, { x: 700, y: 320, side: 'enemy' }],
+};
+
+const el = {
+  map: document.getElementById('map'), phaseBadge: document.getElementById('phaseBadge'), togglePhaseBtn: document.getElementById('togglePhaseBtn'),
+  resolveBtn: document.getElementById('resolveBtn'), nextTurnBtn: document.getElementById('nextTurnBtn'), turnCounter: document.getElementById('turnCounter'),
+  orderQueue: document.getElementById('orderQueue'), actionPoints: document.getElementById('actionPoints'), selectionInfo: document.getElementById('selectionInfo'),
+  summaryBox: document.getElementById('summaryBox'), historyList: document.getElementById('historyList'), designerForm: document.getElementById('designerForm'),
+  templateList: document.getElementById('templateList'), orbatTree: document.getElementById('orbatTree'), intelPanel: document.getElementById('intelPanel'),
+  analytics: document.getElementById('analytics'), quickActions: document.getElementById('quickActions'), turnDialog: document.getElementById('turnDialog'),
+  dialogContent: document.getElementById('dialogContent'), closeDialogBtn: document.getElementById('closeDialogBtn'),
+  lineFormationBtn: document.getElementById('lineFormationBtn'), echelonFormationBtn: document.getElementById('echelonFormationBtn'),
+  defArcFormationBtn: document.getElementById('defArcFormationBtn'), clearOrdersBtn: document.getElementById('clearOrdersBtn'),
+  aiDifficulty: document.getElementById('aiDifficulty'), hotseatBtn: document.getElementById('hotseatBtn'), runAiBtn: document.getElementById('runAiBtn'),
+  exportOrdersBtn: document.getElementById('exportOrdersBtn'), importOrdersBtn: document.getElementById('importOrdersBtn'), scenarioSelect: document.getElementById('scenarioSelect'),
+  loadScenarioBtn: document.getElementById('loadScenarioBtn')
+};
+
+const ORDER_COST = { move: 1, attack: 2, defend: 1, recon: 1 };
+const unitNodes = new Map();
+let selectionBox = null;
+let dragStart = null;
+
+function init() {
+  const grid = document.createElement('div'); grid.className = 'grid'; el.map.appendChild(grid);
+  renderUnits(); wireEvents(); refreshUI(); captureSnapshot('Initial deployment');
+}
+
+function wireEvents() {
+  el.map.addEventListener('click', onMapClick);
+  el.map.addEventListener('contextmenu', onMapContext);
+  el.map.addEventListener('mousedown', onMapMouseDown);
+  el.map.addEventListener('mousemove', onMapMouseMove);
+  window.addEventListener('mouseup', onMapMouseUp);
+  document.querySelectorAll('[data-order]').forEach(btn => btn.addEventListener('click', () => state.currentOrderType = btn.dataset.order));
+  document.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase(); if (k === 'a') state.currentOrderType = 'attack'; if (k === 'm') state.currentOrderType = 'move'; if (k === 'd') state.currentOrderType = 'defend'; if (k === 'r') state.currentOrderType = 'recon';
+  });
+  el.togglePhaseBtn.addEventListener('click', () => { state.phase = state.phase === 'planning' ? 'resolution' : 'planning'; refreshUI(); });
+  el.resolveBtn.addEventListener('click', resolveTurn); el.nextTurnBtn.addEventListener('click', nextTurn); el.closeDialogBtn.addEventListener('click', () => el.turnDialog.close());
+  el.clearOrdersBtn.addEventListener('click', () => { state.orders = []; refreshUI(); });
+  el.lineFormationBtn.addEventListener('click', () => applyFormation('line'));
+  el.echelonFormationBtn.addEventListener('click', () => applyFormation('echelon'));
+  el.defArcFormationBtn.addEventListener('click', () => applyFormation('arc'));
+  el.aiDifficulty.addEventListener('change', () => state.aiDifficulty = el.aiDifficulty.value);
+  el.runAiBtn.addEventListener('click', () => runAiTurn());
+  el.hotseatBtn.addEventListener('click', toggleHotseat);
+  el.exportOrdersBtn.addEventListener('click', exportOrders);
+  el.importOrdersBtn.addEventListener('click', importOrders);
+  el.loadScenarioBtn.addEventListener('click', () => loadScenario(el.scenarioSelect.value));
+  el.designerForm.addEventListener('submit', (e) => { e.preventDefault(); const form = new FormData(el.designerForm); state.templates.push(Object.fromEntries(form.entries())); renderTemplates(); });
+  el.historyList.addEventListener('click', (ev) => { const li = ev.target.closest('li[data-turn]'); if (!li) return; jumpToTurn(Number(li.dataset.turn)); });
+}
+
+function renderUnits() {
+  const visibleIds = new Set();
+  [...el.map.querySelectorAll('.depot,.supply-line,.order-arrow,.explosion,.capture-wave,.selection-box')].forEach(n => n.remove());
+  for (const d of state.supplyDepots) {
+    const n = document.createElement('div'); n.className = `depot ${d.side}`; n.style.transform = `translate(${d.x}px, ${d.y}px)`; el.map.appendChild(n);
+  }
+  for (const unit of state.units) {
+    if (unit.side === 'enemy' && !unit.spotted && state.turn > 1) continue;
+    visibleIds.add(unit.id);
+    let node = unitNodes.get(unit.id);
+    if (!node) { node = document.createElement('div'); node.dataset.id = unit.id; el.map.appendChild(node); unitNodes.set(unit.id, node); }
+    node.className = `unit ${unit.side}`;
+    if (unit.id === state.selectedUnitId || state.selectedUnitIds.includes(unit.id)) node.classList.add('selected');
+    if (unit.supply !== 'Well-supplied') node.classList.add('low-supply');
+    node.style.transform = `translate(${unit.x}px, ${unit.y}px)`;
+    node.innerHTML = `<span>${unit.id}</span><span class="health"><i style="width:${unit.hp}%"></i></span>`;
+    drawSupplyLine(unit);
+  }
+  for (const [id, node] of unitNodes.entries()) if (!visibleIds.has(id)) { node.remove(); unitNodes.delete(id); }
+  drawOrderArrows();
+  detectEncirclement();
+}
+
+function drawSupplyLine(unit) {
+  const depots = state.supplyDepots.filter(d => d.side === unit.side);
+  if (!depots.length) return;
+  depots.sort((a,b)=>Math.hypot(unit.x-a.x, unit.y-a.y)-Math.hypot(unit.x-b.x, unit.y-b.y));
+  const d=depots[0], dx=d.x-unit.x, dy=d.y-unit.y, dist=Math.hypot(dx,dy), angle=Math.atan2(dy,dx)*180/Math.PI;
+  const line = document.createElement('div'); line.className='supply-line'; line.style.width=`${dist}px`; line.style.left=`${unit.x+14}px`; line.style.top=`${unit.y+14}px`; line.style.transform=`rotate(${angle}deg)`; el.map.appendChild(line);
+}
+
+function drawOrderArrows() {
+  for (const order of state.orders) {
+    if (!order.target) continue;
+    const unit = state.units.find(u => u.id === order.unitId); if (!unit) continue;
+    const dx = order.target.x - unit.x, dy = order.target.y - unit.y, dist = Math.hypot(dx, dy), angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    const arrow = document.createElement('div'); arrow.className = `order-arrow ${order.type}`; arrow.style.width = `${dist}px`; arrow.style.left = `${unit.x + 14}px`; arrow.style.top = `${unit.y + 14}px`; arrow.style.transform = `rotate(${angle}deg)`; el.map.appendChild(arrow);
+  }
+}
+
+function onMapMouseDown(e){ if(!e.shiftKey || state.phase!=='planning') return; dragStart={x:e.offsetX,y:e.offsetY}; selectionBox=document.createElement('div'); selectionBox.className='selection-box'; el.map.appendChild(selectionBox); }
+function onMapMouseMove(e){ if(!dragStart||!selectionBox) return; const x=Math.min(dragStart.x,e.offsetX), y=Math.min(dragStart.y,e.offsetY), w=Math.abs(e.offsetX-dragStart.x), h=Math.abs(e.offsetY-dragStart.y); Object.assign(selectionBox.style,{left:`${x}px`,top:`${y}px`,width:`${w}px`,height:`${h}px`}); }
+function onMapMouseUp(){ if(!dragStart||!selectionBox) return; const r=selectionBox.getBoundingClientRect(); state.selectedUnitIds=state.units.filter(u=>u.side===state.currentSide).filter(u=>{const n=unitNodes.get(u.id); if(!n) return false; const b=n.getBoundingClientRect(); return b.left>=r.left&&b.top>=r.top&&b.right<=r.right&&b.bottom<=r.bottom;}).map(u=>u.id); selectionBox.remove(); selectionBox=null; dragStart=null; refreshUI(); }
+
+function onMapClick(e) {
+  if (state.phase !== 'planning') return;
+  const unitEl = e.target.closest('.unit');
+  if (unitEl) { state.selectedUnitId = unitEl.dataset.id; if (!e.shiftKey) state.selectedUnitIds = [state.selectedUnitId]; refreshUI(); return; }
+  const targets = state.selectedUnitIds.length ? state.selectedUnitIds : [state.selectedUnitId];
+  const rect = el.map.getBoundingClientRect(); const x = Math.max(0, Math.min(rect.width - 28, e.clientX - rect.left)); const y = Math.max(0, Math.min(rect.height - 28, e.clientY - rect.top));
+  targets.forEach((id, idx) => {
+    const unit = state.units.find(u => u.id === id && u.side === state.currentSide); if (!unit) return;
+    const cost = ORDER_COST[state.currentOrderType] || 1; if (unit.ap < cost) return; unit.ap -= cost;
+    state.orders.push({ unitId: unit.id, type: state.currentOrderType, target: { x: x + idx*12, y: y + idx*8 } });
+  });
+  refreshUI();
+}
+
+function onMapContext(e) {
+  e.preventDefault(); const unitEl = e.target.closest('.unit'); el.quickActions.innerHTML = ''; if (!unitEl) { el.quickActions.classList.add('hidden'); return; }
+  state.selectedUnitId = unitEl.dataset.id;
+  ['move', 'attack', 'defend', 'recon'].forEach(action => { const b = document.createElement('button'); b.textContent = action.toUpperCase(); b.onclick = () => { state.currentOrderType = action; el.quickActions.classList.add('hidden'); }; el.quickActions.appendChild(b); });
+  el.quickActions.style.left = `${e.clientX}px`; el.quickActions.style.top = `${e.clientY}px`; el.quickActions.classList.remove('hidden'); refreshUI();
+}
+
+function applyFormation(kind){
+  const ids = state.selectedUnitIds.length ? state.selectedUnitIds : [state.selectedUnitId];
+  const units = ids.map(id=>state.units.find(u=>u.id===id)).filter(Boolean);
+  if (units.length < 2) return;
+  const base = units[0];
+  units.forEach((u,i)=>{
+    let tx=base.x, ty=base.y;
+    if (kind==='line'){ tx += i*32; }
+    if (kind==='echelon'){ tx += i*28; ty += i*18; }
+    if (kind==='arc'){ const a=(-0.6 + (i/(units.length-1||1))*1.2); tx += Math.cos(a)*70; ty += Math.sin(a)*50; }
+    queueOrder(u,'move',tx,ty);
+  });
+  refreshUI();
+}
+
+function queueOrder(unit,type,x,y){ const cost = ORDER_COST[type] || 1; if(unit.ap<cost) return; unit.ap-=cost; state.orders.push({unitId:unit.id,type,target:{x,y}}); }
+
+function resolveTurn() {
+  state.phase = 'resolution';
+  const events = []; const casualties = { ally: 0, enemy: 0 }; const territories = Math.floor(Math.random() * 2);
+  for (const order of state.orders) {
+    const unit = state.units.find(u => u.id === order.unitId); if (!unit || unit.hp <= 0) continue;
+    if (order.type === 'move' || order.type === 'recon' || order.type === 'defend') {
+      smoothMoveUnit(unit, order.target.x, order.target.y); events.push(`${unit.id} ${order.type} to (${Math.round(order.target.x)},${Math.round(order.target.y)})`);
+      if (order.type === 'recon') revealEnemiesNear(unit, 190); if (order.type === 'defend') unit.readiness = 'Full';
+    }
+    if (order.type === 'attack') {
+      const target = nearestEnemy(unit); if (target) {
+        const terrain = 1 + (Math.random()*0.2 - 0.1);
+        const odds = ((unit.power * (unit.readiness === 'Full' ? 1.2 : 1)) / Math.max(1, target.power)) * terrain;
+        const dmg = Math.floor(15 + odds * 15); target.hp = Math.max(0, target.hp - dmg); unit.hp = Math.max(0, unit.hp - Math.floor(5 + (1 / Math.max(odds, .3)) * 8));
+        spawnExplosion(target.x + 14, target.y + 14); events.push(`${unit.id} attacked ${target.id} (odds ${odds.toFixed(1)}:1, -${dmg} HP)`);
+        if (target.hp <= 0) { casualties[target.side] += 1; events.push(`${target.id} eliminated`); }
+        else if (odds > 1.2) { target.x += 35; target.y += 18; events.push(`${target.id} retreated`); }
+      }
+    }
+  }
+  runAiTurn(events);
+  for (const unit of state.units) if (unit.hp > 0) applySupply(unit);
+  if (territories > 0) { spawnCaptureWave(420, 260); events.push(`Territory shifted by ${territories} sectors`); }
+  state.units = state.units.filter(u => u.hp > 0); state.orders = [];
+  const summary = { turn: state.turn, events, casualties, territories, analytics: calcAnalytics() }; state.history.push(summary); captureSnapshot(`Turn ${state.turn} resolved`); showTurnDialog(summary); refreshUI();
+}
+
+function runAiTurn(events=[]){
+  const enemies = state.units.filter(u=>u.side==='enemy' && u.hp>0);
+  const scale = state.aiDifficulty==='hard'?1.2:state.aiDifficulty==='easy'?0.8:1;
+  enemies.forEach(eu=>{
+    const nearest = state.units.filter(u=>u.side==='ally').sort((a,b)=>Math.hypot(eu.x-a.x,eu.y-a.y)-Math.hypot(eu.x-b.x,eu.y-b.y))[0];
+    if (!nearest) return;
+    const dist = Math.hypot(eu.x-nearest.x, eu.y-nearest.y);
+    if (dist < 130) {
+      const dmg = Math.floor((10 + eu.power*1.5) * scale); nearest.hp = Math.max(0, nearest.hp - dmg); spawnExplosion(nearest.x+14, nearest.y+14); events.push(`AI ${eu.id} attacked ${nearest.id} (-${dmg} HP)`);
+    } else {
+      const step = 35 * scale; const ang = Math.atan2(nearest.y-eu.y, nearest.x-eu.x); smoothMoveUnit(eu, eu.x+Math.cos(ang)*step, eu.y+Math.sin(ang)*step); events.push(`AI ${eu.id} advanced`);
+    }
+  });
+}
+
+function toggleHotseat(){ state.currentSide = state.currentSide==='ally' ? 'enemy':'ally'; el.hotseatBtn.textContent = `Hotseat: ${state.currentSide[0].toUpperCase()+state.currentSide.slice(1)}s`; refreshUI(); }
+function exportOrders(){ navigator.clipboard?.writeText(JSON.stringify(state.orders)); alert('Orders copied to clipboard as JSON.'); }
+function importOrders(){ const raw = prompt('Paste orders JSON'); if(!raw) return; try{ const parsed = JSON.parse(raw); if(Array.isArray(parsed)) state.orders = parsed; refreshUI(); }catch{ alert('Invalid JSON'); }}
+
+function loadScenario(name){
+  const scenarios = {
+    default: state.units,
+    kursk: [
+      { id:'A1',side:'ally',x:120,y:120,readiness:'Full',supply:'Well-supplied',morale:'Veteran',hp:100,ap:3,power:8,mobility:5,type:'Armor Btn' },
+      { id:'A2',side:'ally',x:170,y:220,readiness:'Reduced',supply:'Low',morale:'Regular',hp:85,ap:3,power:6,mobility:5,type:'Infantry Btn' },
+      { id:'E1',side:'enemy',x:520,y:180,readiness:'Full',supply:'Well-supplied',morale:'Regular',hp:100,ap:3,power:8,mobility:5,type:'Armor Btn',spotted:false },
+      { id:'E2',side:'enemy',x:620,y:260,readiness:'Full',supply:'Well-supplied',morale:'Regular',hp:90,ap:3,power:7,mobility:5,type:'AT Btn',spotted:false }
+    ],
+    normandy: [
+      { id:'A1',side:'ally',x:70,y:330,readiness:'Full',supply:'Well-supplied',morale:'Veteran',hp:100,ap:3,power:7,mobility:6,type:'Marine Btn' },
+      { id:'A2',side:'ally',x:130,y:300,readiness:'Full',supply:'Well-supplied',morale:'Regular',hp:90,ap:3,power:6,mobility:5,type:'Airborne Coy' },
+      { id:'E1',side:'enemy',x:560,y:170,readiness:'Reduced',supply:'Low',morale:'Regular',hp:85,ap:3,power:6,mobility:4,type:'Infantry Btn',spotted:false },
+      { id:'E2',side:'enemy',x:640,y:240,readiness:'Minimal',supply:'Out',morale:'Shaken',hp:70,ap:3,power:5,mobility:4,type:'Artillery Bty',spotted:false }
+    ]
+  };
+  state.units = JSON.parse(JSON.stringify(scenarios[name] || scenarios.default));
+  state.orders=[]; state.selectedUnitId=null; state.selectedUnitIds=[]; refreshUI();
+}
+
+function nextTurn() { state.turn += 1; state.phase = 'planning'; state.units.forEach(u => (u.ap = 3)); el.map.classList.add('turn-fade'); setTimeout(() => el.map.classList.remove('turn-fade'), 600); refreshUI(); }
+function smoothMoveUnit(unit, x, y) { const node = unitNodes.get(unit.id); if (!node) { unit.x=x; unit.y=y; return; } requestAnimationFrame(() => { node.style.transform = `translate(${x}px, ${y}px)`; unit.x = x; unit.y = y; }); }
+function nearestEnemy(unit) { return state.units.filter(u => u.side !== unit.side).sort((a,b)=>Math.hypot(unit.x-a.x,unit.y-a.y)-Math.hypot(unit.x-b.x,unit.y-b.y))[0]; }
+function revealEnemiesNear(unit, radius) { for (const enemy of state.units.filter(u => u.side !== unit.side)) if (Math.hypot(unit.x-enemy.x, unit.y-enemy.y)<=radius) enemy.spotted = true; }
+function detectEncirclement(){
+  for (const u of state.units.filter(u=>u.side==='ally')) {
+    const enemies = state.units.filter(e=>e.side==='enemy' && Math.hypot(e.x-u.x,e.y-u.y)<140).length;
+    if (enemies>=2) u.supply='Out';
+  }
+}
+function applySupply(unit) { const own = state.supplyDepots.filter(d => d.side === unit.side); const minDist = Math.min(...own.map(d => Math.hypot(unit.x-d.x, unit.y-d.y))); if (minDist > 320) { unit.supply='Out'; unit.hp=Math.max(0,unit.hp-8);} else if (minDist > 200) unit.supply='Low'; else unit.supply='Well-supplied'; }
+function spawnExplosion(x, y) { const e = document.createElement('div'); e.className='explosion'; e.style.left=`${x}px`; e.style.top=`${y}px`; el.map.appendChild(e); setTimeout(() => e.remove(), 500); }
+function spawnCaptureWave(x, y) { const w = document.createElement('div'); w.className='capture-wave'; w.style.left=`${x}px`; w.style.top=`${y}px`; el.map.appendChild(w); setTimeout(() => w.remove(), 800); }
+function showTurnDialog(summary) { el.dialogContent.innerHTML = `<p><strong>Casualties:</strong> Ally ${summary.casualties.ally}, Enemy ${summary.casualties.enemy}</p><p><strong>Territory Change:</strong> ${summary.territories} sectors</p><ul>${summary.events.map(e => `<li>${e}</li>`).join('')}</ul>`; el.turnDialog.showModal(); }
+function captureSnapshot(note) { state.timelineSnapshots.push({turn: state.turn,note,units: JSON.parse(JSON.stringify(state.units))}); }
+function jumpToTurn(turn) { const snap = [...state.timelineSnapshots].reverse().find(s => s.turn === turn); if (!snap) return; state.units = JSON.parse(JSON.stringify(snap.units)); state.turn = turn; refreshUI(); }
+function renderTemplates() { el.templateList.innerHTML = state.templates.map((t, i) => `<li>#${i+1} ${t.baseType} ${t.echelon} (${t.special}) P:${t.power} M:${t.mobility}</li>`).join(''); }
+function renderOrbat() { const ally = state.units.filter(u => u.side === 'ally'); el.orbatTree.innerHTML = `<div>1st Division<ul><li>1st Brigade<ul>${ally.map(u => `<li>${u.id} ${u.type}</li>`).join('')}</ul></li></ul></div>`; }
+function renderHistory() { el.historyList.innerHTML = state.history.map(h => `<li data-turn="${h.turn}">Turn ${h.turn}: ${h.events.join(' | ')}</li>`).join(''); }
+function renderIntel() { const reports = state.units.filter(u => u.side==='enemy').map(u => `<div>${(u.spotted||state.turn===1) ? `${u.id} ${u.type} @ (${Math.round(u.x)},${Math.round(u.y)})` : 'Unknown contact'}</div>`).join(''); el.intelPanel.innerHTML = reports || '<div>No enemy contacts.</div>'; }
+function calcAnalytics() { const allies = state.units.filter(u => u.side==='ally'), enemies = state.units.filter(u => u.side==='enemy'); const sidePower = arr => arr.reduce((s,u)=>s+(u.power*(u.hp/100)),0).toFixed(1); return { allyPower: sidePower(allies), enemyPower: sidePower(enemies), control: allies.length+enemies.length ? Math.round((allies.length/(allies.length+enemies.length))*100) : 50, avgSupply: allies.length ? (allies.filter(u => u.supply==='Well-supplied').length/allies.length*100).toFixed(0) : '0', casualtyTurns: state.history.length }; }
+function renderAnalytics() { const a = calcAnalytics(); el.analytics.innerHTML = `<div>Combat Power (Allies): ${a.allyPower}</div><div>Combat Power (Enemy): ${a.enemyPower}</div><div>Territory Control (Allied est.): ${a.control}%</div><div>Supply Efficiency: ${a.avgSupply}%</div><div>Turns Logged: ${a.casualtyTurns}</div>`; }
+function refreshUI() {
+  el.phaseBadge.textContent = state.phase === 'planning' ? 'Planning Phase' : 'Resolution Phase'; el.phaseBadge.className = `badge ${state.phase}`; el.turnCounter.textContent = `Turn ${state.turn}`;
+  const selected = state.units.find(u => u.id === state.selectedUnitId); el.actionPoints.textContent = selected ? selected.ap : 0;
+  el.selectionInfo.textContent = selected ? `${selected.id} | ${selected.type} | Readiness:${selected.readiness} | Supply:${selected.supply} | Morale:${selected.morale} | Side:${state.currentSide}` : `No unit selected | Side:${state.currentSide}`;
+  el.orderQueue.innerHTML = state.orders.map(o => `<li>${o.unitId}: ${o.type.toUpperCase()} → ${Math.round(o.target.x)}, ${Math.round(o.target.y)}</li>`).join('');
+  const last = state.history[state.history.length - 1]; el.summaryBox.innerHTML = last ? `Turn ${last.turn}: Ally losses ${last.casualties.ally}, Enemy losses ${last.casualties.enemy}, Territory ${last.territories}` : 'No turns resolved yet.';
+  renderUnits(); renderTemplates(); renderOrbat(); renderHistory(); renderIntel(); renderAnalytics();
+}
+init();
+
+</script>
+</body>
+</html>
