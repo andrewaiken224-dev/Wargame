@@ -47,7 +47,7 @@ button:hover { background:#324762; }
   display:grid; place-items:center;
   font-size:10px;
   color:#081014;
-  transition: transform 220ms linear, box-shadow 160ms ease;
+  transition: transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 160ms ease;
   will-change: transform;
 }
 .unit.ally { background: var(--ally); }
@@ -80,6 +80,12 @@ button:hover { background:#324762; }
 .summary, .history { font-size:13px; }
 .history li { margin-bottom:6px; cursor:pointer; }
 .context-menu { position:fixed; background:#1d2a38; border:1px solid #45607b; border-radius:6px; z-index:20; min-width:130px; }
+.selection-box { position:absolute; border:1px dashed #9ce5ff; background: rgba(120,200,255,.15); pointer-events:none; }
+.depot { position:absolute; width:14px; height:14px; border-radius:50%; border:2px solid #000; background:#fff; }
+.depot.ally{ background:#7dffa1; }
+.depot.enemy{ background:#ff6b6b; }
+.supply-line { position:absolute; height:1px; background:#9ce5ff; opacity:.5; transform-origin:left center; }
+.controls-grid, .tool-row { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:6px; }
 .context-menu button { display:block; width:100%; text-align:left; border:none; border-bottom:1px solid #344b62; border-radius:0; background:transparent; }
 .hidden { display:none; }
 .designer label { display:block; font-size:12px; margin-bottom:6px; }
@@ -118,6 +124,12 @@ button:hover { background:#324762; }
       </div>
       <h3>Order Queue</h3>
       <ul id="orderQueue"></ul>
+      <div class="tool-row">
+        <button id="lineFormationBtn">Line Formation</button>
+        <button id="echelonFormationBtn">Echelon Formation</button>
+        <button id="defArcFormationBtn">Def Arc</button>
+        <button id="clearOrdersBtn">Clear Orders</button>
+      </div>
 
       <h2>Turn Summary</h2>
       <div id="summaryBox" class="summary"></div>
@@ -129,6 +141,7 @@ button:hover { background:#324762; }
     <section class="map-wrap panel">
       <div id="map" class="map"></div>
       <div id="selectionInfo" class="selection">No unit selected</div>
+      <div class="selection">Shift+Drag = batch select</div>
       <div id="quickActions" class="context-menu hidden"></div>
     </section>
 
@@ -167,6 +180,29 @@ button:hover { background:#324762; }
 
       <h2>Analytics</h2>
       <div id="analytics"></div>
+
+      <h2>AI / Multiplayer / Scenarios</h2>
+      <label>AI Difficulty
+        <select id="aiDifficulty">
+          <option value="easy">Easy</option>
+          <option value="normal" selected>Normal</option>
+          <option value="hard">Hard</option>
+        </select>
+      </label>
+      <div class="tool-row">
+        <button id="hotseatBtn">Hotseat: Allies</button>
+        <button id="runAiBtn">Run AI</button>
+        <button id="exportOrdersBtn">Export Orders</button>
+        <button id="importOrdersBtn">Import Orders</button>
+      </div>
+      <label>Scenario
+        <select id="scenarioSelect">
+          <option value="default">Default</option>
+          <option value="kursk">Battle of Kursk (sample)</option>
+          <option value="normandy">Normandy (sample)</option>
+        </select>
+      </label>
+      <button id="loadScenarioBtn">Load Scenario</button>
     </aside>
   </main>
 
@@ -177,14 +213,18 @@ button:hover { background:#324762; }
   </dialog>
 
   <script>
+
 const state = {
   turn: 1,
   phase: 'planning',
   selectedUnitId: null,
+  selectedUnitIds: [],
   currentOrderType: 'move',
   templates: [],
   history: [],
   timelineSnapshots: [],
+  currentSide: 'ally',
+  aiDifficulty: 'normal',
   units: [
     { id: 'A1', side: 'ally', x: 80, y: 90, readiness: 'Full', supply: 'Well-supplied', morale: 'Veteran', hp: 100, ap: 3, power: 7, mobility: 6, type: 'Infantry Btn' },
     { id: 'A2', side: 'ally', x: 120, y: 220, readiness: 'Reduced', supply: 'Low', morale: 'Regular', hp: 75, ap: 3, power: 6, mobility: 5, type: 'Armor Coy' },
@@ -196,417 +236,234 @@ const state = {
 };
 
 const el = {
-  map: document.getElementById('map'),
-  phaseBadge: document.getElementById('phaseBadge'),
-  togglePhaseBtn: document.getElementById('togglePhaseBtn'),
-  resolveBtn: document.getElementById('resolveBtn'),
-  nextTurnBtn: document.getElementById('nextTurnBtn'),
-  turnCounter: document.getElementById('turnCounter'),
-  orderQueue: document.getElementById('orderQueue'),
-  actionPoints: document.getElementById('actionPoints'),
-  selectionInfo: document.getElementById('selectionInfo'),
-  summaryBox: document.getElementById('summaryBox'),
-  historyList: document.getElementById('historyList'),
-  designerForm: document.getElementById('designerForm'),
-  templateList: document.getElementById('templateList'),
-  orbatTree: document.getElementById('orbatTree'),
-  intelPanel: document.getElementById('intelPanel'),
-  analytics: document.getElementById('analytics'),
-  quickActions: document.getElementById('quickActions'),
-  turnDialog: document.getElementById('turnDialog'),
-  dialogContent: document.getElementById('dialogContent'),
-  closeDialogBtn: document.getElementById('closeDialogBtn')
+  map: document.getElementById('map'), phaseBadge: document.getElementById('phaseBadge'), togglePhaseBtn: document.getElementById('togglePhaseBtn'),
+  resolveBtn: document.getElementById('resolveBtn'), nextTurnBtn: document.getElementById('nextTurnBtn'), turnCounter: document.getElementById('turnCounter'),
+  orderQueue: document.getElementById('orderQueue'), actionPoints: document.getElementById('actionPoints'), selectionInfo: document.getElementById('selectionInfo'),
+  summaryBox: document.getElementById('summaryBox'), historyList: document.getElementById('historyList'), designerForm: document.getElementById('designerForm'),
+  templateList: document.getElementById('templateList'), orbatTree: document.getElementById('orbatTree'), intelPanel: document.getElementById('intelPanel'),
+  analytics: document.getElementById('analytics'), quickActions: document.getElementById('quickActions'), turnDialog: document.getElementById('turnDialog'),
+  dialogContent: document.getElementById('dialogContent'), closeDialogBtn: document.getElementById('closeDialogBtn'),
+  lineFormationBtn: document.getElementById('lineFormationBtn'), echelonFormationBtn: document.getElementById('echelonFormationBtn'),
+  defArcFormationBtn: document.getElementById('defArcFormationBtn'), clearOrdersBtn: document.getElementById('clearOrdersBtn'),
+  aiDifficulty: document.getElementById('aiDifficulty'), hotseatBtn: document.getElementById('hotseatBtn'), runAiBtn: document.getElementById('runAiBtn'),
+  exportOrdersBtn: document.getElementById('exportOrdersBtn'), importOrdersBtn: document.getElementById('importOrdersBtn'), scenarioSelect: document.getElementById('scenarioSelect'),
+  loadScenarioBtn: document.getElementById('loadScenarioBtn')
 };
 
 const ORDER_COST = { move: 1, attack: 2, defend: 1, recon: 1 };
 const unitNodes = new Map();
+let selectionBox = null;
+let dragStart = null;
 
 function init() {
-  const grid = document.createElement('div');
-  grid.className = 'grid';
-  el.map.appendChild(grid);
-
-  renderUnits();
-  wireEvents();
-  refreshUI();
-  captureSnapshot('Initial deployment');
+  const grid = document.createElement('div'); grid.className = 'grid'; el.map.appendChild(grid);
+  renderUnits(); wireEvents(); refreshUI(); captureSnapshot('Initial deployment');
 }
 
 function wireEvents() {
   el.map.addEventListener('click', onMapClick);
   el.map.addEventListener('contextmenu', onMapContext);
-
-  document.querySelectorAll('[data-order]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.currentOrderType = btn.dataset.order;
-    });
-  });
-
+  el.map.addEventListener('mousedown', onMapMouseDown);
+  el.map.addEventListener('mousemove', onMapMouseMove);
+  window.addEventListener('mouseup', onMapMouseUp);
+  document.querySelectorAll('[data-order]').forEach(btn => btn.addEventListener('click', () => state.currentOrderType = btn.dataset.order));
   document.addEventListener('keydown', (e) => {
-    if (e.key.toLowerCase() === 'a') state.currentOrderType = 'attack';
-    if (e.key.toLowerCase() === 'm') state.currentOrderType = 'move';
-    if (e.key.toLowerCase() === 'd') state.currentOrderType = 'defend';
-    if (e.key.toLowerCase() === 'r') state.currentOrderType = 'recon';
+    const k = e.key.toLowerCase(); if (k === 'a') state.currentOrderType = 'attack'; if (k === 'm') state.currentOrderType = 'move'; if (k === 'd') state.currentOrderType = 'defend'; if (k === 'r') state.currentOrderType = 'recon';
   });
-
-  el.togglePhaseBtn.addEventListener('click', () => {
-    state.phase = state.phase === 'planning' ? 'resolution' : 'planning';
-    refreshUI();
-  });
-
-  el.resolveBtn.addEventListener('click', resolveTurn);
-  el.nextTurnBtn.addEventListener('click', nextTurn);
-  el.closeDialogBtn.addEventListener('click', () => el.turnDialog.close());
-
-  el.designerForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const form = new FormData(el.designerForm);
-    const template = Object.fromEntries(form.entries());
-    state.templates.push(template);
-    renderTemplates();
-  });
-
-  el.historyList.addEventListener('click', (ev) => {
-    const li = ev.target.closest('li[data-turn]');
-    if (!li) return;
-    const turn = Number(li.dataset.turn);
-    jumpToTurn(turn);
-  });
+  el.togglePhaseBtn.addEventListener('click', () => { state.phase = state.phase === 'planning' ? 'resolution' : 'planning'; refreshUI(); });
+  el.resolveBtn.addEventListener('click', resolveTurn); el.nextTurnBtn.addEventListener('click', nextTurn); el.closeDialogBtn.addEventListener('click', () => el.turnDialog.close());
+  el.clearOrdersBtn.addEventListener('click', () => { state.orders = []; refreshUI(); });
+  el.lineFormationBtn.addEventListener('click', () => applyFormation('line'));
+  el.echelonFormationBtn.addEventListener('click', () => applyFormation('echelon'));
+  el.defArcFormationBtn.addEventListener('click', () => applyFormation('arc'));
+  el.aiDifficulty.addEventListener('change', () => state.aiDifficulty = el.aiDifficulty.value);
+  el.runAiBtn.addEventListener('click', () => runAiTurn());
+  el.hotseatBtn.addEventListener('click', toggleHotseat);
+  el.exportOrdersBtn.addEventListener('click', exportOrders);
+  el.importOrdersBtn.addEventListener('click', importOrders);
+  el.loadScenarioBtn.addEventListener('click', () => loadScenario(el.scenarioSelect.value));
+  el.designerForm.addEventListener('submit', (e) => { e.preventDefault(); const form = new FormData(el.designerForm); state.templates.push(Object.fromEntries(form.entries())); renderTemplates(); });
+  el.historyList.addEventListener('click', (ev) => { const li = ev.target.closest('li[data-turn]'); if (!li) return; jumpToTurn(Number(li.dataset.turn)); });
 }
 
 function renderUnits() {
   const visibleIds = new Set();
-
+  [...el.map.querySelectorAll('.depot,.supply-line,.order-arrow,.explosion,.capture-wave,.selection-box')].forEach(n => n.remove());
+  for (const d of state.supplyDepots) {
+    const n = document.createElement('div'); n.className = `depot ${d.side}`; n.style.transform = `translate(${d.x}px, ${d.y}px)`; el.map.appendChild(n);
+  }
   for (const unit of state.units) {
     if (unit.side === 'enemy' && !unit.spotted && state.turn > 1) continue;
     visibleIds.add(unit.id);
-
     let node = unitNodes.get(unit.id);
-    if (!node) {
-      node = document.createElement('div');
-      node.dataset.id = unit.id;
-      el.map.appendChild(node);
-      unitNodes.set(unit.id, node);
-    }
-
+    if (!node) { node = document.createElement('div'); node.dataset.id = unit.id; el.map.appendChild(node); unitNodes.set(unit.id, node); }
     node.className = `unit ${unit.side}`;
-    if (unit.id === state.selectedUnitId) node.classList.add('selected');
+    if (unit.id === state.selectedUnitId || state.selectedUnitIds.includes(unit.id)) node.classList.add('selected');
     if (unit.supply !== 'Well-supplied') node.classList.add('low-supply');
     node.style.transform = `translate(${unit.x}px, ${unit.y}px)`;
     node.innerHTML = `<span>${unit.id}</span><span class="health"><i style="width:${unit.hp}%"></i></span>`;
+    drawSupplyLine(unit);
   }
-
-  for (const [id, node] of unitNodes.entries()) {
-    if (!visibleIds.has(id)) {
-      node.remove();
-      unitNodes.delete(id);
-    }
-  }
-
+  for (const [id, node] of unitNodes.entries()) if (!visibleIds.has(id)) { node.remove(); unitNodes.delete(id); }
   drawOrderArrows();
+  detectEncirclement();
+}
+
+function drawSupplyLine(unit) {
+  const depots = state.supplyDepots.filter(d => d.side === unit.side);
+  if (!depots.length) return;
+  depots.sort((a,b)=>Math.hypot(unit.x-a.x, unit.y-a.y)-Math.hypot(unit.x-b.x, unit.y-b.y));
+  const d=depots[0], dx=d.x-unit.x, dy=d.y-unit.y, dist=Math.hypot(dx,dy), angle=Math.atan2(dy,dx)*180/Math.PI;
+  const line = document.createElement('div'); line.className='supply-line'; line.style.width=`${dist}px`; line.style.left=`${unit.x+14}px`; line.style.top=`${unit.y+14}px`; line.style.transform=`rotate(${angle}deg)`; el.map.appendChild(line);
 }
 
 function drawOrderArrows() {
-  [...el.map.querySelectorAll('.order-arrow')].forEach(n => n.remove());
   for (const order of state.orders) {
     if (!order.target) continue;
-    const unit = state.units.find(u => u.id === order.unitId);
-    if (!unit) continue;
-    const dx = order.target.x - unit.x;
-    const dy = order.target.y - unit.y;
-    const dist = Math.hypot(dx, dy);
-    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-
-    const arrow = document.createElement('div');
-    arrow.className = `order-arrow ${order.type}`;
-    arrow.style.width = `${dist}px`;
-    arrow.style.left = `${unit.x + 14}px`;
-    arrow.style.top = `${unit.y + 14}px`;
-    arrow.style.transform = `rotate(${angle}deg)`;
-    el.map.appendChild(arrow);
+    const unit = state.units.find(u => u.id === order.unitId); if (!unit) continue;
+    const dx = order.target.x - unit.x, dy = order.target.y - unit.y, dist = Math.hypot(dx, dy), angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    const arrow = document.createElement('div'); arrow.className = `order-arrow ${order.type}`; arrow.style.width = `${dist}px`; arrow.style.left = `${unit.x + 14}px`; arrow.style.top = `${unit.y + 14}px`; arrow.style.transform = `rotate(${angle}deg)`; el.map.appendChild(arrow);
   }
 }
 
+function onMapMouseDown(e){ if(!e.shiftKey || state.phase!=='planning') return; dragStart={x:e.offsetX,y:e.offsetY}; selectionBox=document.createElement('div'); selectionBox.className='selection-box'; el.map.appendChild(selectionBox); }
+function onMapMouseMove(e){ if(!dragStart||!selectionBox) return; const x=Math.min(dragStart.x,e.offsetX), y=Math.min(dragStart.y,e.offsetY), w=Math.abs(e.offsetX-dragStart.x), h=Math.abs(e.offsetY-dragStart.y); Object.assign(selectionBox.style,{left:`${x}px`,top:`${y}px`,width:`${w}px`,height:`${h}px`}); }
+function onMapMouseUp(){ if(!dragStart||!selectionBox) return; const r=selectionBox.getBoundingClientRect(); state.selectedUnitIds=state.units.filter(u=>u.side===state.currentSide).filter(u=>{const n=unitNodes.get(u.id); if(!n) return false; const b=n.getBoundingClientRect(); return b.left>=r.left&&b.top>=r.top&&b.right<=r.right&&b.bottom<=r.bottom;}).map(u=>u.id); selectionBox.remove(); selectionBox=null; dragStart=null; refreshUI(); }
+
 function onMapClick(e) {
   if (state.phase !== 'planning') return;
-
   const unitEl = e.target.closest('.unit');
-  if (unitEl) {
-    state.selectedUnitId = unitEl.dataset.id;
-    refreshUI();
-    return;
-  }
-
-  const unit = state.units.find(u => u.id === state.selectedUnitId);
-  if (!unit || unit.side !== 'ally') return;
-
-  const rect = el.map.getBoundingClientRect();
-  const x = Math.max(0, Math.min(rect.width - 28, e.clientX - rect.left));
-  const y = Math.max(0, Math.min(rect.height - 28, e.clientY - rect.top));
-
-  const cost = ORDER_COST[state.currentOrderType] || 1;
-  if (unit.ap < cost) return;
-
-  unit.ap -= cost;
-  state.orders.push({ unitId: unit.id, type: state.currentOrderType, target: { x, y } });
+  if (unitEl) { state.selectedUnitId = unitEl.dataset.id; if (!e.shiftKey) state.selectedUnitIds = [state.selectedUnitId]; refreshUI(); return; }
+  const targets = state.selectedUnitIds.length ? state.selectedUnitIds : [state.selectedUnitId];
+  const rect = el.map.getBoundingClientRect(); const x = Math.max(0, Math.min(rect.width - 28, e.clientX - rect.left)); const y = Math.max(0, Math.min(rect.height - 28, e.clientY - rect.top));
+  targets.forEach((id, idx) => {
+    const unit = state.units.find(u => u.id === id && u.side === state.currentSide); if (!unit) return;
+    const cost = ORDER_COST[state.currentOrderType] || 1; if (unit.ap < cost) return; unit.ap -= cost;
+    state.orders.push({ unitId: unit.id, type: state.currentOrderType, target: { x: x + idx*12, y: y + idx*8 } });
+  });
   refreshUI();
 }
 
 function onMapContext(e) {
-  e.preventDefault();
-  const unitEl = e.target.closest('.unit');
-  el.quickActions.innerHTML = '';
-  if (!unitEl) {
-    el.quickActions.classList.add('hidden');
-    return;
-  }
-
+  e.preventDefault(); const unitEl = e.target.closest('.unit'); el.quickActions.innerHTML = ''; if (!unitEl) { el.quickActions.classList.add('hidden'); return; }
   state.selectedUnitId = unitEl.dataset.id;
-  ['move', 'attack', 'defend', 'recon'].forEach(action => {
-    const b = document.createElement('button');
-    b.textContent = action.toUpperCase();
-    b.onclick = () => {
-      state.currentOrderType = action;
-      el.quickActions.classList.add('hidden');
-    };
-    el.quickActions.appendChild(b);
-  });
+  ['move', 'attack', 'defend', 'recon'].forEach(action => { const b = document.createElement('button'); b.textContent = action.toUpperCase(); b.onclick = () => { state.currentOrderType = action; el.quickActions.classList.add('hidden'); }; el.quickActions.appendChild(b); });
+  el.quickActions.style.left = `${e.clientX}px`; el.quickActions.style.top = `${e.clientY}px`; el.quickActions.classList.remove('hidden'); refreshUI();
+}
 
-  el.quickActions.style.left = `${e.clientX}px`;
-  el.quickActions.style.top = `${e.clientY}px`;
-  el.quickActions.classList.remove('hidden');
+function applyFormation(kind){
+  const ids = state.selectedUnitIds.length ? state.selectedUnitIds : [state.selectedUnitId];
+  const units = ids.map(id=>state.units.find(u=>u.id===id)).filter(Boolean);
+  if (units.length < 2) return;
+  const base = units[0];
+  units.forEach((u,i)=>{
+    let tx=base.x, ty=base.y;
+    if (kind==='line'){ tx += i*32; }
+    if (kind==='echelon'){ tx += i*28; ty += i*18; }
+    if (kind==='arc'){ const a=(-0.6 + (i/(units.length-1||1))*1.2); tx += Math.cos(a)*70; ty += Math.sin(a)*50; }
+    queueOrder(u,'move',tx,ty);
+  });
   refreshUI();
 }
+
+function queueOrder(unit,type,x,y){ const cost = ORDER_COST[type] || 1; if(unit.ap<cost) return; unit.ap-=cost; state.orders.push({unitId:unit.id,type,target:{x,y}}); }
 
 function resolveTurn() {
   state.phase = 'resolution';
-  const events = [];
-  const casualties = { ally: 0, enemy: 0 };
-  const territories = Math.floor(Math.random() * 2);
-
+  const events = []; const casualties = { ally: 0, enemy: 0 }; const territories = Math.floor(Math.random() * 2);
   for (const order of state.orders) {
-    const unit = state.units.find(u => u.id === order.unitId);
-    if (!unit || unit.hp <= 0) continue;
-
+    const unit = state.units.find(u => u.id === order.unitId); if (!unit || unit.hp <= 0) continue;
     if (order.type === 'move' || order.type === 'recon' || order.type === 'defend') {
-      smoothMoveUnit(unit, order.target.x, order.target.y);
-      events.push(`${unit.id} ${order.type} to (${Math.round(order.target.x)},${Math.round(order.target.y)})`);
-      if (order.type === 'recon') revealEnemiesNear(unit, 170);
-      if (order.type === 'defend') unit.readiness = 'Full';
+      smoothMoveUnit(unit, order.target.x, order.target.y); events.push(`${unit.id} ${order.type} to (${Math.round(order.target.x)},${Math.round(order.target.y)})`);
+      if (order.type === 'recon') revealEnemiesNear(unit, 190); if (order.type === 'defend') unit.readiness = 'Full';
     }
-
     if (order.type === 'attack') {
-      const target = nearestEnemy(unit);
-      if (target) {
-        const odds = (unit.power * (unit.readiness === 'Full' ? 1.2 : 1)) / Math.max(1, target.power);
-        const dmg = Math.floor(15 + odds * 15);
-        target.hp = Math.max(0, target.hp - dmg);
-        unit.hp = Math.max(0, unit.hp - Math.floor(5 + (1 / Math.max(odds, .3)) * 8));
-        spawnExplosion(target.x + 14, target.y + 14);
-        events.push(`${unit.id} attacked ${target.id} (odds ${odds.toFixed(1)}:1, -${dmg} HP)`);
-        if (target.hp <= 0) {
-          casualties[target.side] += 1;
-          events.push(`${target.id} eliminated`);
-        } else if (odds > 1.2) {
-          target.x += 30;
-          target.y += 20;
-          events.push(`${target.id} retreated`);
-        }
+      const target = nearestEnemy(unit); if (target) {
+        const terrain = 1 + (Math.random()*0.2 - 0.1);
+        const odds = ((unit.power * (unit.readiness === 'Full' ? 1.2 : 1)) / Math.max(1, target.power)) * terrain;
+        const dmg = Math.floor(15 + odds * 15); target.hp = Math.max(0, target.hp - dmg); unit.hp = Math.max(0, unit.hp - Math.floor(5 + (1 / Math.max(odds, .3)) * 8));
+        spawnExplosion(target.x + 14, target.y + 14); events.push(`${unit.id} attacked ${target.id} (odds ${odds.toFixed(1)}:1, -${dmg} HP)`);
+        if (target.hp <= 0) { casualties[target.side] += 1; events.push(`${target.id} eliminated`); }
+        else if (odds > 1.2) { target.x += 35; target.y += 18; events.push(`${target.id} retreated`); }
       }
     }
   }
-
-  for (const unit of state.units) {
-    if (unit.hp <= 0) continue;
-    applySupply(unit);
-  }
-
-  if (territories > 0) {
-    spawnCaptureWave(420, 260);
-    events.push(`Territory shifted by ${territories} sectors`);
-  }
-
-  state.units = state.units.filter(u => u.hp > 0);
-  state.orders = [];
-
-  const summary = {
-    turn: state.turn,
-    events,
-    casualties,
-    territories,
-    analytics: calcAnalytics()
-  };
-  state.history.push(summary);
-  captureSnapshot(`Turn ${state.turn} resolved`);
-  showTurnDialog(summary);
-
-  refreshUI();
+  runAiTurn(events);
+  for (const unit of state.units) if (unit.hp > 0) applySupply(unit);
+  if (territories > 0) { spawnCaptureWave(420, 260); events.push(`Territory shifted by ${territories} sectors`); }
+  state.units = state.units.filter(u => u.hp > 0); state.orders = [];
+  const summary = { turn: state.turn, events, casualties, territories, analytics: calcAnalytics() }; state.history.push(summary); captureSnapshot(`Turn ${state.turn} resolved`); showTurnDialog(summary); refreshUI();
 }
 
-function nextTurn() {
-  state.turn += 1;
-  state.phase = 'planning';
-  state.units.forEach(u => (u.ap = 3));
-  el.map.classList.add('turn-fade');
-  setTimeout(() => el.map.classList.remove('turn-fade'), 600);
-  refreshUI();
-}
-
-function smoothMoveUnit(unit, x, y) {
-  const node = unitNodes.get(unit.id);
-  if (!node) {
-    unit.x = x;
-    unit.y = y;
-    return;
-  }
-
-  requestAnimationFrame(() => {
-    node.style.transform = `translate(${x}px, ${y}px)`;
-    unit.x = x;
-    unit.y = y;
+function runAiTurn(events=[]){
+  const enemies = state.units.filter(u=>u.side==='enemy' && u.hp>0);
+  const scale = state.aiDifficulty==='hard'?1.2:state.aiDifficulty==='easy'?0.8:1;
+  enemies.forEach(eu=>{
+    const nearest = state.units.filter(u=>u.side==='ally').sort((a,b)=>Math.hypot(eu.x-a.x,eu.y-a.y)-Math.hypot(eu.x-b.x,eu.y-b.y))[0];
+    if (!nearest) return;
+    const dist = Math.hypot(eu.x-nearest.x, eu.y-nearest.y);
+    if (dist < 130) {
+      const dmg = Math.floor((10 + eu.power*1.5) * scale); nearest.hp = Math.max(0, nearest.hp - dmg); spawnExplosion(nearest.x+14, nearest.y+14); events.push(`AI ${eu.id} attacked ${nearest.id} (-${dmg} HP)`);
+    } else {
+      const step = 35 * scale; const ang = Math.atan2(nearest.y-eu.y, nearest.x-eu.x); smoothMoveUnit(eu, eu.x+Math.cos(ang)*step, eu.y+Math.sin(ang)*step); events.push(`AI ${eu.id} advanced`);
+    }
   });
 }
 
-function nearestEnemy(unit) {
-  const enemies = state.units.filter(u => u.side !== unit.side);
-  enemies.sort((a, b) => (Math.hypot(unit.x - a.x, unit.y - a.y) - Math.hypot(unit.x - b.x, unit.y - b.y)));
-  return enemies[0];
-}
+function toggleHotseat(){ state.currentSide = state.currentSide==='ally' ? 'enemy':'ally'; el.hotseatBtn.textContent = `Hotseat: ${state.currentSide[0].toUpperCase()+state.currentSide.slice(1)}s`; refreshUI(); }
+function exportOrders(){ navigator.clipboard?.writeText(JSON.stringify(state.orders)); alert('Orders copied to clipboard as JSON.'); }
+function importOrders(){ const raw = prompt('Paste orders JSON'); if(!raw) return; try{ const parsed = JSON.parse(raw); if(Array.isArray(parsed)) state.orders = parsed; refreshUI(); }catch{ alert('Invalid JSON'); }}
 
-function revealEnemiesNear(unit, radius) {
-  for (const enemy of state.units.filter(u => u.side !== unit.side)) {
-    const d = Math.hypot(unit.x - enemy.x, unit.y - enemy.y);
-    if (d <= radius) enemy.spotted = true;
-  }
-}
-
-function applySupply(unit) {
-  const ownDepots = state.supplyDepots.filter(d => d.side === unit.side);
-  const minDist = Math.min(...ownDepots.map(d => Math.hypot(unit.x - d.x, unit.y - d.y)));
-  if (minDist > 320) {
-    unit.supply = 'Out';
-    unit.hp = Math.max(0, unit.hp - 8);
-  } else if (minDist > 200) {
-    unit.supply = 'Low';
-  } else {
-    unit.supply = 'Well-supplied';
-  }
-}
-
-function spawnExplosion(x, y) {
-  const e = document.createElement('div');
-  e.className = 'explosion';
-  e.style.left = `${x}px`;
-  e.style.top = `${y}px`;
-  el.map.appendChild(e);
-  setTimeout(() => e.remove(), 500);
-}
-
-function spawnCaptureWave(x, y) {
-  const w = document.createElement('div');
-  w.className = 'capture-wave';
-  w.style.left = `${x}px`;
-  w.style.top = `${y}px`;
-  el.map.appendChild(w);
-  setTimeout(() => w.remove(), 800);
-}
-
-function showTurnDialog(summary) {
-  el.dialogContent.innerHTML = `
-    <p><strong>Casualties:</strong> Ally ${summary.casualties.ally}, Enemy ${summary.casualties.enemy}</p>
-    <p><strong>Territory Change:</strong> ${summary.territories} sectors</p>
-    <ul>${summary.events.map(e => `<li>${e}</li>`).join('')}</ul>
-  `;
-  el.turnDialog.showModal();
-}
-
-function captureSnapshot(note) {
-  state.timelineSnapshots.push({
-    turn: state.turn,
-    note,
-    units: JSON.parse(JSON.stringify(state.units))
-  });
-}
-
-function jumpToTurn(turn) {
-  const snap = [...state.timelineSnapshots].reverse().find(s => s.turn === turn);
-  if (!snap) return;
-  state.units = JSON.parse(JSON.stringify(snap.units));
-  state.turn = turn;
-  refreshUI();
-}
-
-function renderTemplates() {
-  el.templateList.innerHTML = state.templates.map((t, idx) => `<li>#${idx + 1} ${t.baseType} ${t.echelon} (${t.special}) P:${t.power} M:${t.mobility}</li>`).join('');
-}
-
-function renderOrbat() {
-  const ally = state.units.filter(u => u.side === 'ally');
-  el.orbatTree.innerHTML = `
-    <div>1st Division
-      <ul>
-        <li>1st Brigade<ul>${ally.map(u => `<li>${u.id} ${u.type}</li>`).join('')}</ul></li>
-      </ul>
-    </div>
-  `;
-}
-
-function renderHistory() {
-  el.historyList.innerHTML = state.history.map(h => `<li data-turn="${h.turn}">Turn ${h.turn}: ${h.events.length} events</li>`).join('');
-}
-
-function renderIntel() {
-  const reports = state.units.filter(u => u.side === 'enemy').map(u => {
-    const known = u.spotted || state.turn === 1;
-    return `<div>${known ? `${u.id} ${u.type} @ (${Math.round(u.x)},${Math.round(u.y)})` : 'Unknown contact'}</div>`;
-  }).join('');
-  el.intelPanel.innerHTML = reports || '<div>No enemy contacts.</div>';
-}
-
-function calcAnalytics() {
-  const allies = state.units.filter(u => u.side === 'ally');
-  const enemies = state.units.filter(u => u.side === 'enemy');
-  const sidePower = (arr) => arr.reduce((sum, u) => sum + (u.power * (u.hp / 100)), 0).toFixed(1);
-  return {
-    allyPower: sidePower(allies),
-    enemyPower: sidePower(enemies),
-    control: allies.length + enemies.length ? Math.round((allies.length / (allies.length + enemies.length)) * 100) : 50,
-    avgSupply: allies.length ? (allies.filter(u => u.supply === 'Well-supplied').length / allies.length * 100).toFixed(0) : '0'
+function loadScenario(name){
+  const scenarios = {
+    default: state.units,
+    kursk: [
+      { id:'A1',side:'ally',x:120,y:120,readiness:'Full',supply:'Well-supplied',morale:'Veteran',hp:100,ap:3,power:8,mobility:5,type:'Armor Btn' },
+      { id:'A2',side:'ally',x:170,y:220,readiness:'Reduced',supply:'Low',morale:'Regular',hp:85,ap:3,power:6,mobility:5,type:'Infantry Btn' },
+      { id:'E1',side:'enemy',x:520,y:180,readiness:'Full',supply:'Well-supplied',morale:'Regular',hp:100,ap:3,power:8,mobility:5,type:'Armor Btn',spotted:false },
+      { id:'E2',side:'enemy',x:620,y:260,readiness:'Full',supply:'Well-supplied',morale:'Regular',hp:90,ap:3,power:7,mobility:5,type:'AT Btn',spotted:false }
+    ],
+    normandy: [
+      { id:'A1',side:'ally',x:70,y:330,readiness:'Full',supply:'Well-supplied',morale:'Veteran',hp:100,ap:3,power:7,mobility:6,type:'Marine Btn' },
+      { id:'A2',side:'ally',x:130,y:300,readiness:'Full',supply:'Well-supplied',morale:'Regular',hp:90,ap:3,power:6,mobility:5,type:'Airborne Coy' },
+      { id:'E1',side:'enemy',x:560,y:170,readiness:'Reduced',supply:'Low',morale:'Regular',hp:85,ap:3,power:6,mobility:4,type:'Infantry Btn',spotted:false },
+      { id:'E2',side:'enemy',x:640,y:240,readiness:'Minimal',supply:'Out',morale:'Shaken',hp:70,ap:3,power:5,mobility:4,type:'Artillery Bty',spotted:false }
+    ]
   };
+  state.units = JSON.parse(JSON.stringify(scenarios[name] || scenarios.default));
+  state.orders=[]; state.selectedUnitId=null; state.selectedUnitIds=[]; refreshUI();
 }
 
-function renderAnalytics() {
-  const a = calcAnalytics();
-  el.analytics.innerHTML = `
-    <div>Combat Power (Allies): ${a.allyPower}</div>
-    <div>Combat Power (Enemy): ${a.enemyPower}</div>
-    <div>Territory Control (Allied est.): ${a.control}%</div>
-    <div>Supply Efficiency: ${a.avgSupply}%</div>
-  `;
+function nextTurn() { state.turn += 1; state.phase = 'planning'; state.units.forEach(u => (u.ap = 3)); el.map.classList.add('turn-fade'); setTimeout(() => el.map.classList.remove('turn-fade'), 600); refreshUI(); }
+function smoothMoveUnit(unit, x, y) { const node = unitNodes.get(unit.id); if (!node) { unit.x=x; unit.y=y; return; } requestAnimationFrame(() => { node.style.transform = `translate(${x}px, ${y}px)`; unit.x = x; unit.y = y; }); }
+function nearestEnemy(unit) { return state.units.filter(u => u.side !== unit.side).sort((a,b)=>Math.hypot(unit.x-a.x,unit.y-a.y)-Math.hypot(unit.x-b.x,unit.y-b.y))[0]; }
+function revealEnemiesNear(unit, radius) { for (const enemy of state.units.filter(u => u.side !== unit.side)) if (Math.hypot(unit.x-enemy.x, unit.y-enemy.y)<=radius) enemy.spotted = true; }
+function detectEncirclement(){
+  for (const u of state.units.filter(u=>u.side==='ally')) {
+    const enemies = state.units.filter(e=>e.side==='enemy' && Math.hypot(e.x-u.x,e.y-u.y)<140).length;
+    if (enemies>=2) u.supply='Out';
+  }
 }
-
+function applySupply(unit) { const own = state.supplyDepots.filter(d => d.side === unit.side); const minDist = Math.min(...own.map(d => Math.hypot(unit.x-d.x, unit.y-d.y))); if (minDist > 320) { unit.supply='Out'; unit.hp=Math.max(0,unit.hp-8);} else if (minDist > 200) unit.supply='Low'; else unit.supply='Well-supplied'; }
+function spawnExplosion(x, y) { const e = document.createElement('div'); e.className='explosion'; e.style.left=`${x}px`; e.style.top=`${y}px`; el.map.appendChild(e); setTimeout(() => e.remove(), 500); }
+function spawnCaptureWave(x, y) { const w = document.createElement('div'); w.className='capture-wave'; w.style.left=`${x}px`; w.style.top=`${y}px`; el.map.appendChild(w); setTimeout(() => w.remove(), 800); }
+function showTurnDialog(summary) { el.dialogContent.innerHTML = `<p><strong>Casualties:</strong> Ally ${summary.casualties.ally}, Enemy ${summary.casualties.enemy}</p><p><strong>Territory Change:</strong> ${summary.territories} sectors</p><ul>${summary.events.map(e => `<li>${e}</li>`).join('')}</ul>`; el.turnDialog.showModal(); }
+function captureSnapshot(note) { state.timelineSnapshots.push({turn: state.turn,note,units: JSON.parse(JSON.stringify(state.units))}); }
+function jumpToTurn(turn) { const snap = [...state.timelineSnapshots].reverse().find(s => s.turn === turn); if (!snap) return; state.units = JSON.parse(JSON.stringify(snap.units)); state.turn = turn; refreshUI(); }
+function renderTemplates() { el.templateList.innerHTML = state.templates.map((t, i) => `<li>#${i+1} ${t.baseType} ${t.echelon} (${t.special}) P:${t.power} M:${t.mobility}</li>`).join(''); }
+function renderOrbat() { const ally = state.units.filter(u => u.side === 'ally'); el.orbatTree.innerHTML = `<div>1st Division<ul><li>1st Brigade<ul>${ally.map(u => `<li>${u.id} ${u.type}</li>`).join('')}</ul></li></ul></div>`; }
+function renderHistory() { el.historyList.innerHTML = state.history.map(h => `<li data-turn="${h.turn}">Turn ${h.turn}: ${h.events.join(' | ')}</li>`).join(''); }
+function renderIntel() { const reports = state.units.filter(u => u.side==='enemy').map(u => `<div>${(u.spotted||state.turn===1) ? `${u.id} ${u.type} @ (${Math.round(u.x)},${Math.round(u.y)})` : 'Unknown contact'}</div>`).join(''); el.intelPanel.innerHTML = reports || '<div>No enemy contacts.</div>'; }
+function calcAnalytics() { const allies = state.units.filter(u => u.side==='ally'), enemies = state.units.filter(u => u.side==='enemy'); const sidePower = arr => arr.reduce((s,u)=>s+(u.power*(u.hp/100)),0).toFixed(1); return { allyPower: sidePower(allies), enemyPower: sidePower(enemies), control: allies.length+enemies.length ? Math.round((allies.length/(allies.length+enemies.length))*100) : 50, avgSupply: allies.length ? (allies.filter(u => u.supply==='Well-supplied').length/allies.length*100).toFixed(0) : '0', casualtyTurns: state.history.length }; }
+function renderAnalytics() { const a = calcAnalytics(); el.analytics.innerHTML = `<div>Combat Power (Allies): ${a.allyPower}</div><div>Combat Power (Enemy): ${a.enemyPower}</div><div>Territory Control (Allied est.): ${a.control}%</div><div>Supply Efficiency: ${a.avgSupply}%</div><div>Turns Logged: ${a.casualtyTurns}</div>`; }
 function refreshUI() {
-  el.phaseBadge.textContent = state.phase === 'planning' ? 'Planning Phase' : 'Resolution Phase';
-  el.phaseBadge.className = `badge ${state.phase}`;
-  el.turnCounter.textContent = `Turn ${state.turn}`;
-  const selected = state.units.find(u => u.id === state.selectedUnitId);
-  el.actionPoints.textContent = selected ? selected.ap : 0;
-  el.selectionInfo.textContent = selected
-    ? `${selected.id} | ${selected.type} | Readiness:${selected.readiness} | Supply:${selected.supply} | Morale:${selected.morale}`
-    : 'No unit selected';
-
+  el.phaseBadge.textContent = state.phase === 'planning' ? 'Planning Phase' : 'Resolution Phase'; el.phaseBadge.className = `badge ${state.phase}`; el.turnCounter.textContent = `Turn ${state.turn}`;
+  const selected = state.units.find(u => u.id === state.selectedUnitId); el.actionPoints.textContent = selected ? selected.ap : 0;
+  el.selectionInfo.textContent = selected ? `${selected.id} | ${selected.type} | Readiness:${selected.readiness} | Supply:${selected.supply} | Morale:${selected.morale} | Side:${state.currentSide}` : `No unit selected | Side:${state.currentSide}`;
   el.orderQueue.innerHTML = state.orders.map(o => `<li>${o.unitId}: ${o.type.toUpperCase()} → ${Math.round(o.target.x)}, ${Math.round(o.target.y)}</li>`).join('');
-  const last = state.history[state.history.length - 1];
-  el.summaryBox.innerHTML = last ? `Turn ${last.turn}: Ally losses ${last.casualties.ally}, Enemy losses ${last.casualties.enemy}, Territory ${last.territories}` : 'No turns resolved yet.';
-
-  renderUnits();
-  renderTemplates();
-  renderOrbat();
-  renderHistory();
-  renderIntel();
-  renderAnalytics();
+  const last = state.history[state.history.length - 1]; el.summaryBox.innerHTML = last ? `Turn ${last.turn}: Ally losses ${last.casualties.ally}, Enemy losses ${last.casualties.enemy}, Territory ${last.territories}` : 'No turns resolved yet.';
+  renderUnits(); renderTemplates(); renderOrbat(); renderHistory(); renderIntel(); renderAnalytics();
 }
-
 init();
 
 </script>
