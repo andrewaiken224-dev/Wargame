@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wargame Turn Planner</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Wargame Turn-Based Planner</h1>
+    <div class="phase-controls">
+      <span id="phaseBadge" class="badge planning">Planning Phase</span>
+      <button id="togglePhaseBtn">Start Resolution</button>
+      <button id="resolveBtn">Resolve Turn</button>
+      <button id="nextTurnBtn">Next Turn</button>
+      <span id="turnCounter">Turn 1</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="left-panel panel">
+      <h2>Orders</h2>
+      <div id="actionPointsWrap">Action Points: <strong id="actionPoints">0</strong></div>
+      <div class="controls-grid">
+        <button data-order="move">Move (M)</button>
+        <button data-order="attack">Attack (A)</button>
+        <button data-order="defend">Defend (D)</button>
+        <button data-order="recon">Recon (R)</button>
+      </div>
+      <h3>Order Queue</h3>
+      <ul id="orderQueue"></ul>
+
+      <h2>Turn Summary</h2>
+      <div id="summaryBox" class="summary"></div>
+
+      <h2>History Timeline</h2>
+      <ul id="historyList" class="history"></ul>
+    </aside>
+
+    <section class="map-wrap panel">
+      <div id="map" class="map"></div>
+      <div id="selectionInfo" class="selection">No unit selected</div>
+      <div id="quickActions" class="context-menu hidden"></div>
+    </section>
+
+    <aside class="right-panel panel">
+      <h2>NATO Catalog</h2>
+      <details open>
+        <summary>Echelons</summary>
+        <p>Squad, Section, Platoon, Company, Battalion, Regiment, Brigade, Division, Corps, Army, Army Group</p>
+      </details>
+      <details>
+        <summary>Types</summary>
+        <p>Infantry, Armor, Artillery, Air Defense, Engineers, Logistics, HQ, Aviation, Naval</p>
+      </details>
+      <details>
+        <summary>Modifiers</summary>
+        <p>Mechanized, Motorized, Armored, Airborne, Marine, Mountain, Combined Arms</p>
+      </details>
+
+      <h2>Division Designer</h2>
+      <form id="designerForm" class="designer">
+        <label>Base Type <input name="baseType" value="Infantry" /></label>
+        <label>Echelon <input name="echelon" value="Battalion" /></label>
+        <label>Specialization <input name="special" value="Mechanized" /></label>
+        <label>Combat Power <input type="number" name="power" value="6" min="1" max="20" /></label>
+        <label>Mobility <input type="number" name="mobility" value="5" min="1" max="10" /></label>
+        <label>Supply Need <input type="number" name="supplyNeed" value="3" min="1" max="10" /></label>
+        <button type="submit">Save Template</button>
+      </form>
+      <ul id="templateList"></ul>
+
+      <h2>ORBAT Editor</h2>
+      <div id="orbatTree" class="orbat"></div>
+
+      <h2>Intel / Fog of War</h2>
+      <div id="intelPanel"></div>
+
+      <h2>Analytics</h2>
+      <div id="analytics"></div>
+    </aside>
+  </main>
+
+  <dialog id="turnDialog">
+    <h3>Turn Results</h3>
+    <div id="dialogContent"></div>
+    <button id="closeDialogBtn">Close</button>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
